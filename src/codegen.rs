@@ -44,10 +44,58 @@
 macro_rules! generate_code {
     {
         $(
+            $(#[doc = $($doc_tt:tt)*])*
+            $(#[cfg($($cfg_tt:tt)*)])*
+            $field:ident : $type:ident {
+                $(
+                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
+                ),+ $(,)? 
+            }
+        )+
+    } => {
+        generate_code!(@munch_cfg [] $(
+            $(#[doc = $($doc_tt)*])*
+            $(#[cfg($($cfg_tt)*)])*
+            $field : $type {
+                $(
+                    $variant $({ $($var_field : $var_type),+ })? => $spec_string
+                ),+
+            }
+        )+);
+    };
+    {@munch_cfg [$($munched:tt)*]
+        $(#[doc = $($doc_tt:tt)*])*
+        $(#[cfg($($cfg_tt:tt)*)])*
+        $field:ident : $type:ident {
+            $(
+                $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
+            ),+ $(,)? 
+        }
+        $($tail:tt)*
+    } => {
+        $(#[cfg($($cfg_tt)*)])*
+        generate_code!(@munch_cfg [$($munched)* 
+            $(#[doc = $($doc_tt)*])*
+            $(#[cfg($($cfg_tt)*)])*
+            $field : $type {
+                $(
+                    $variant $({ $($var_field : $var_type),+ })? => $spec_string
+                ),+
+            }
+        ] $($tail)*);
+        #[cfg(not(all($($($cfg_tt)*),*)))]
+        generate_code!(@munch_cfg [$($munched)*] $($tail)*);
+    };
+    {@munch_cfg [$($munched:tt)*]
+    } => {
+        generate_code!(@inner $($munched)*);
+    };
+    {@inner
+        $(
             $(#[$dim_meta:meta])*
             $field:ident : $type:ident {
                 $(
-                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $lit:literal
+                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
                 ),+ $(,)? 
             }
         )+
@@ -61,8 +109,8 @@ macro_rules! generate_code {
                     $variant $({ $($var_field: $var_type),+ })?
                 ),+
             }
-            generate_code!(@enum_try_from $type [] [$(($lit $variant $({$($var_field)+})?))+]);
-            generate_code!(@enum_display $type [] [$(($lit $variant $({$($var_field)+})?))+]);
+            generate_code!(@enum_try_from $type [] [$(($spec_string $variant $({$($var_field)+})?))+]);
+            generate_code!(@enum_display $type [] [$(($spec_string $variant $({$($var_field)+})?))+]);
         )+
 
         /// The specification for the format of an argument in the formatting string.
@@ -76,7 +124,7 @@ macro_rules! generate_code {
 
         generate_code!(@fn_format_value
             $(
-                [$field $type $([$lit $variant $([$($var_field)+])?])+]
+                [$field $type $([$spec_string $variant $([$($var_field)+])?])+]
             )+
         );
 
@@ -103,43 +151,43 @@ macro_rules! generate_code {
         }
     };
     (@enum_try_from
-        $type:ident [$($munched:tt)*] [($lit:literal $variant:ident) $($tail:tt)*]
+        $type:ident [$($munched:tt)*] [($spec_string:tt $variant:ident) $($tail:tt)*]
     ) => {
-        generate_code!(@enum_try_from $type [$($munched)* ($lit $variant)] [$($tail)*]);
+        generate_code!(@enum_try_from $type [$($munched)* ($spec_string $variant)] [$($tail)*]);
     };
     (@enum_try_from
-        $type:ident [$($munched:tt)*] [($lit:literal $variant:ident $_:tt) $($tail:tt)*]
+        $type:ident [$($munched:tt)*] [($spec_string:tt $variant:ident $_:tt) $($tail:tt)*]
     ) => {
     };
     (@enum_try_from
-        $type:ident [$(($lit:literal $variant:ident))+] []
+        $type:ident [$(($spec_string:tt $variant:ident))+] []
     ) => {
         impl TryFrom<&str> for $type {
             type Error = ();
             fn try_from(value: &str) -> Result<Self, Self::Error> {
                 match value {
-                    $($lit => Ok($type::$variant),)+
+                    $($spec_string => Ok($type::$variant),)+
                     _ => Err(())
                 }
             }
         }
     };
     (@enum_display
-        $type:ident [$($munched:tt)*] [($lit:literal $variant:ident) $($tail:tt)*]
+        $type:ident [$($munched:tt)*] [($spec_string:tt $variant:ident) $($tail:tt)*]
     ) => {
-        generate_code!(@enum_display $type [$($munched)* ($lit $variant)] [$($tail)*]);
+        generate_code!(@enum_display $type [$($munched)* ($spec_string $variant)] [$($tail)*]);
     };
     (@enum_display
-        $type:ident [$($munched:tt)*] [($lit:literal $variant:ident $_:tt) $($tail:tt)*]
+        $type:ident [$($munched:tt)*] [($spec_string:tt $variant:ident $_:tt) $($tail:tt)*]
     ) => {
     };
     (@enum_display
-        $type:ident [$(($lit:literal $variant:ident))+] []
+        $type:ident [$(($spec_string:tt $variant:ident))+] []
     ) => {
         impl fmt::Display for $type {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self {
-                    $($type::$variant => write!(f, $lit),)+
+                    $($type::$variant => write!(f, $spec_string),)+
                 }
             }
         }
@@ -173,14 +221,14 @@ macro_rules! generate_code {
     };
     (@matcher_branch
         ($spec:ident, $val:ident, $out:ident, $prefix:expr, $named_args:tt)
-        [$field:ident $type:ident $([$lit:literal $variant:ident $([$($var_field:ident)+])?])+]
+        [$field:ident $type:ident $([$spec_string:tt $variant:ident $([$($var_field:ident)+])?])+]
         $tail:tt
     ) => {
         match $spec.$field {
             $(
                 $type::$variant $({ $($var_field),+ })? => generate_code!(
                     @matcher_tail
-                    ($spec, $val, $out, concat!($prefix, $lit))
+                    ($spec, $val, $out, concat!($prefix, $spec_string))
                     $named_args
                     [$($($var_field)+)?]
                     $tail
@@ -193,13 +241,13 @@ macro_rules! generate_code {
     };
     (@matcher_leaf
         ($spec:ident, $val:ident, $out:ident, $prefix:expr, $named_args:tt)
-        [$field:ident $type:ident $([$lit:literal $variant:ident $([$($var_field:ident)+])?])+]
+        [$field:ident $type:ident $([$spec_string:tt $variant:ident $([$($var_field:ident)+])?])+]
     ) => {
         match $spec.$field {
             $(
                 $type::$variant $({ $($var_field),+ })? => generate_code!(
                     @matcher_concat_args
-                    ($spec, $val, $out, concat!($prefix, $lit))
+                    ($spec, $val, $out, concat!($prefix, $spec_string))
                     $named_args
                     [$($($var_field)+)?]
                 )
