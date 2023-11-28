@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![feature(formatting_options)]
 
 //! Fully-runtime equivalent of the `format!` macro.
 //! 
@@ -120,42 +121,42 @@ pub use crate::parser::{ParsedFormat, Substitution};
 
 generate_code! {
     /// Specifies the alignment of an argument with a specific width.
-    align: Align {
-        None => "",
-        Left => "<",
-        Center => "^",
-        Right => ">",
+    align: Align as fn align {
+        None => "" as None,
+        Left => "<" as Some(fmt::Alignment::Left),
+        Center => "^" as Some(fmt::Alignment::Center),
+        Right => ">" as Some(fmt::Alignment::Right),
     }
 
     /// Specifies whether the sign of a numeric argument should always be emitted.
-    sign: Sign {
-        Default => "",
-        Always => "+",
+    sign: Sign as fn sign {
+        Default => "" as None,
+        Always => "+" as Some(fmt::Sign::Plus),
     }
 
     /// Specifies whether to use the alternate representation for certain formats.
-    repr: Repr {
-        Default => "",
-        Alt => "#",
+    repr: Repr as fn alternate {
+        Default => "" as false,
+        Alt => "#" as true,
     }
 
     /// Specifies whether a numeric argument with specific width should be padded with spaces or
     /// zeroes.
-    pad: Pad {
-        Space => "",
-        Zero => "0",
+    pad: Pad as fn sign_aware_zero_pad {
+        Space => "" as false,
+        Zero => "0" as true,
     }
 
     /// Specifies whether an argument should be padded to a specific width.
-    width: Width {
-        Auto => "",
-        AtLeast { width: usize } => "width$",
+    width: Width as fn width {
+        Auto => "" as None, 
+        AtLeast { width: usize } => "width$" as Some(width),
     }
 
     /// Specifies whether an argument should be formatted with a specific precision.
-    precision: Precision {
-        Auto => "",
-        Exactly { precision: usize } => ".precision$",
+    precision: Precision as fn precision {
+        Auto => "" as None,
+        Exactly { precision: usize } => ".precision$" as Some(precision),
     }
 
     /// Specifies how to format an argument.

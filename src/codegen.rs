@@ -6,49 +6,79 @@
 //! `Specifier` struct, the name of the enum type to generate for that field, and the definition of
 //! each variant for that enum. Each variant definition declares the variant name, optionally with
 //! one or more fields for that variant to contain, and then the format string fragment to generate
-//! when that variant is matched.
+//! when that variant is matched. Each dimension except the format needs to also supply the name of
+//! the `FormattingOptions` method corresponding to this field as well as the value to use for each
+//! variant.
 //! 
-//! The way `format_value` function works is through a tree of nested `match` blocks on `Specifier`
-//! fields, with a call to `write!` macro with a different formatting string at each leaf.
+//! The way `format_value` function works is
+//! - without the `nightly` feature, through a tree of nested `match` blocks on `Specifier` fields,
+//! with a call to `write!` macro with a different formatting string at each leaf.
+//! - with the `nightly` feature, through a `fmt::FormattingOptions` instance that is used to build
+//! a `Formatter` matching the `Specifier` and is then used to call the `fmt` method of the
+//! formatting trait corresponding to the `Format` variant used in specifier (which is recognized
+//! by missing identifiers for the `FormattiongOptions` method, a missing expression for the value,
+//! the struct field name `format` and the enum name `Format`). Note that the constructed
+//! `format_value` function processes the dimensions in the order fed to the macro. Therefore, the
+//! `Format` dimension has to be the last one, as all the other dimensions are necessary to
+//! construct the `Formatter` used in the `Format` dimension.
 //! 
 //! # Examples
 //! ```ignore
 //! generate_code! {
-//!     foo: Foo {
-//!         Argle => "",
-//!         Bargle { glop_glyf: usize } => "glop_glyf$",
+//!     foo: Foo as fn mod_foo {
+//!         Argle => "" as None,
+//!         Bargle { glop_glyf: usize } => "glop_glyf$" as Some(glop_glyf),
 //!     }
 //! 
-//!     bar: Bar {
+//!     format: Format {
 //!         Olle => "",
 //!         Bolle => "@",
 //!     }
 //! }
 //! ```
 //! 
-//! The resulting `format_value` would look like this:
+//! The resulting `format_value` would look like this without the `nightly` feature:
 //! ```ignore
 //! pub fn format_value<V>(specifier: &Specifier, value: &V, f: &mut fmt::Formatter) -> fmt::Result {
 //!     match (specifier.foo) {
-//!         Argle => match (specifier.bar) {
+//!         Argle => match (specifier.format) {
 //!             Olle => write!(f, "{:}", value),
 //!             Bolle => write!(f, "{:@}", value),
 //!         },
-//!         Bargle { glop_glyf } => match (specifier.bar) {
+//!         Bargle { glop_glyf } => match (specifier.format) {
 //!             Olle => write!(f, "{:glop_glyf$}", value, glop_glyf),
 //!             Bolle => write!(f, "{:glop_glyf$@}", value, glop_glyf),
 //!         }
 //!     }
 //! }
+//! ```
+//! 
+//! And it would look like this with the `nightly` feature:
+//! ```ignore
+//! pub fn format_value<V>(specifier: &Specifier, value: &V, f: &mut fmt::Formatter) -> fmt::Result {
+//!     use std::fmt;
+//!     let mut formatting_options = fmt::FormattingOptions::new();
+//!     match specifier.foo {
+//!         Foo::Argle => formatting_options.mod_foo(None),
+//!         Foo::Bargle { glop_glyf } => formatting_options.mod_foo(Some(glop_glyf)),
+//!     }
+//!     
+//!     let mut formatter = f.with_options(formatting_options);
+//!     return match specifier.format {
+//!         Format::Olle => std::fmt::Olle::fmt(value, &mut formatter),
+//!         Format::Bolle => std::fmt::Bolle::fmt(value, &mut formatter),
+//!     };
+//! }
+//! ````
 
 macro_rules! generate_code {
     {
         $(
             $(#[doc = $($doc_tt:tt)*])*
             $(#[cfg($($cfg_tt:tt)*)])*
-            $field:ident : $type:ident {
+            $field:ident : $type:ident $(as fn $fmt_opt_method:ident)? {
                 $(
-                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
+                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt $(as $fmt_opt_value:expr)?
                 ),+ $(,)? 
             }
         )+
@@ -56,9 +86,9 @@ macro_rules! generate_code {
         generate_code!(@munch_cfg [] $(
             $(#[doc = $($doc_tt)*])*
             $(#[cfg($($cfg_tt)*)])*
-            $field : $type {
+            $field : $type $(as fn $fmt_opt_method)? {
                 $(
-                    $variant $({ $($var_field : $var_type),+ })? => $spec_string
+                    $variant $({ $($var_field : $var_type),+ })? => $spec_string $(as $fmt_opt_value)?
                 ),+
             }
         )+);
@@ -66,9 +96,9 @@ macro_rules! generate_code {
     {@munch_cfg [$($munched:tt)*]
         $(#[doc = $($doc_tt:tt)*])*
         $(#[cfg($($cfg_tt:tt)*)])*
-        $field:ident : $type:ident {
+        $field:ident : $type:ident $(as fn $fmt_opt_method:ident)? {
             $(
-                $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
+                $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt $(as $fmt_opt_value:expr)?
             ),+ $(,)? 
         }
         $($tail:tt)*
@@ -77,9 +107,9 @@ macro_rules! generate_code {
         generate_code!(@munch_cfg [$($munched)* 
             $(#[doc = $($doc_tt)*])*
             $(#[cfg($($cfg_tt)*)])*
-            $field : $type {
+            $field : $type $(as fn $fmt_opt_method)? {
                 $(
-                    $variant $({ $($var_field : $var_type),+ })? => $spec_string
+                    $variant $({ $($var_field : $var_type),+ })? => $spec_string $(as $fmt_opt_value)?
                 ),+
             }
         ] $($tail)*);
@@ -93,9 +123,9 @@ macro_rules! generate_code {
     {@inner
         $(
             $(#[$dim_meta:meta])*
-            $field:ident : $type:ident {
+            $field:ident : $type:ident $(as fn $fmt_opt_method:ident)? {
                 $(
-                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt
+                    $variant:ident $({ $($var_field:ident : $var_type:ty),+ })? => $spec_string:tt $(as $fmt_opt_value:expr)?
                 ),+ $(,)? 
             }
         )+
@@ -122,9 +152,17 @@ macro_rules! generate_code {
             ),+
         }
 
+        #[cfg(not(feature = "nightly"))]
         generate_code!(@fn_format_value
             $(
                 [$field $type $([$spec_string $variant $([$($var_field)+])?])+]
+            )+
+        );
+
+        #[cfg(feature = "nightly")]
+        generate_code!(@fn_format_value_with_formatting_options
+            $(
+                [$field $type ($($fmt_opt_method)?) $([$variant $([$($var_field)+])? ($($fmt_opt_value)?)])+]
             )+
         );
 
@@ -264,5 +302,47 @@ macro_rules! generate_code {
             $val,
             $($named_arg = $named_arg),*
         )
+    };
+    (@fn_format_value_with_formatting_options $($dimension:tt)+) => {
+        /// Formats the given value using the given formatter and the given format specification.
+        /// 
+        /// The `value` must implement all of the `std::fmt` formatting traits. Which trait will
+        /// actually be used is determined at runtime, based on the contents of the `specifier`.
+        pub fn format_value<V>(specifier: &Specifier, value: &V, f: &mut fmt::Formatter) -> fmt::Result
+        where
+            V: fmt::Display
+                + fmt::Debug
+                + fmt::Octal
+                + fmt::LowerHex
+                + fmt::UpperHex
+                + fmt::Binary
+                + fmt::LowerExp
+                + fmt::UpperExp,
+        {
+            use std::fmt;
+            let mut formatting_options = fmt::FormattingOptions::new();
+
+            $(generate_code!(@mutate_formatting_options formatting_options specifier value f $dimension);)+
+
+        }
+    };
+    (@mutate_formatting_options $formatting_options:ident $specifier:ident $value:ident $out:ident
+        [$field:ident $type:ident ($fmt_opt_method:ident) $([$variant:ident $([$($var_field:tt)+])? ($fmt_opt_value:expr)])+]
+    ) => {
+        match $specifier.$field {
+            $(
+                $type::$variant $({$($var_field)+})?  => $formatting_options.$fmt_opt_method($fmt_opt_value),
+            )+
+        }
+    };
+    (@mutate_formatting_options $formatting_options:ident $specifier:ident $value:ident $out:ident
+        [format Format () $([$variant:ident ()])+]
+    ) => {
+        let mut formatter = $out.with_options($formatting_options);
+       return match $specifier.format {
+            $(
+                Format::$variant => std::fmt::$variant::fmt($value, &mut formatter),
+            )+
+        }
     };
 }
